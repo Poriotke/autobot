@@ -1,28 +1,5 @@
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import threading
-
-# Tiny web server to keep Render happy and handle health checks
-class HealthCheckHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b"Bot is alive!")
-
-    def do_HEAD(self):
-        self.send_response(200)
-        self.end_headers()
-
-def run_health_check():
-    # Render uses port 10000 by default for free services
-    server = HTTPServer(('0.0.0.0', 10000), HealthCheckHandler)
-    server.serve_forever()
-
-# Start the web server in a background thread so it doesn't block the bot
-threading.Thread(target=run_health_check, daemon=True).start()
-
-# ---------------------------------------------------------
-# YOUR EXISTING BOT CODE (Telethon, etc.) STARTS BELOW HERE
-# ---------------------------------------------------------
 from telethon import TelegramClient, events, Button
 import asyncio
 import aiohttp
@@ -33,77 +10,299 @@ import time
 import json
 import re
 from datetime import datetime
-# Direct API endpoint (replaces checker_bridge)
-CHECKER_API_URL = 'http://108.165.12.183:8081/'
 
-# Premium Custom Emoji IDs (bot must be created with Telegram Premium account)
-# Use @RawDataBot to get custom_emoji_id for any premium emoji
-PREMIUM_EMOJI_IDS = {
-    "✅": "6023660820544623088",   # ✨ Multi Sparkles / Celebration
-    "🔥": "5999340396432333728",   # 🔥 Purple Flame Heart
-    "❌": "6037570896766438989",   # 💀 White Skull (Dark Glow)
-    "⚡": "6026367225466720832",   # ⚡ Yellow Lightning Bolt
-    "💳": "5971944878815317190",   # 💫 Floating Color Dots
-    "💠": "5971837723676249096",   # 🌀 Neon Circle Rings
-    "📝": "6023660820544623088",   # ✨
-    "🌐": "6026367225466720832",   # ⚡
-    "🎯": "5974235702701853774",   # 🟠🟡🟢 Triple Ring Loader
-    "🤖": "6057466460886799210",   # 😼 Dark Cat Face
-    "🤵": "4949560993840629085",   # 🧠 Golden Maze
-    "💰": "5971944878815317190",   # 💫
-    "⏸️": "6001440193058444284",   # ⚙️ Arc Reactor
-    "▶️": "6285315214673975495",   # ➡️ Neon Arrow Right
-    "🛑": "5420323339723881652",   # ⚠️ Red Warning Triangle
-    "📊": "5971837723676249096",   # 🌀
-    "📦": "6066395745139824604",   # 🎀 Neon Pink Bow
-    "📋": "5974235702701853774",   # Triple Ring
-    "🔄": "5971837723676249096",   # 🌀 Neon Circle Rings
-    "⏳": "5971837723676249096",   # 🌀
-    "🚀": "6282977077427702833",   # 🎉 Color Confetti
-    "⚠️": "5420323339723881652",   # ⚠️ Red Warning Triangle
-    "💎": "6023660820544623088",   # ✨
-}
+# --- RENDER HEALTH CHECK SERVER ---
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"Bot is alive!")
+    def do_HEAD(self):
+        self.send_response(200)
+        self.end_headers()
 
-def premium_emoji(text):
-    """Replace Unicode emojis with <tg-emoji emoji-id="..."> for Premium custom emojis.
-    Requires a Telethon/parser that supports <tg-emoji emoji-id="ID"> in HTML (e.g. Telethon 2.x or custom parser).
-    Bot must be created with a Telegram Premium account for custom emojis to send."""
-    if not text:
-        return text
-    # Use placeholders to avoid replacing the same emoji inside tags again
-    placeholders = []
-    result = text
-    for i, (emoji, doc_id) in enumerate(PREMIUM_EMOJI_IDS.items()):
-        placeholder = f"\x00PE{i:02d}\x00"
-        placeholders.append((placeholder, doc_id, emoji))
-        result = result.replace(emoji, placeholder)
-    for placeholder, doc_id, emoji in placeholders:
-        result = result.replace(placeholder, f'<tg-emoji emoji-id="{doc_id}">{emoji}</tg-emoji>')
-    return result
+def run_health_check():
+    server = HTTPServer(('0.0.0.0', 10000), HealthCheckHandler)
+    server.serve_forever()
 
-# Bot Configuration
+threading.Thread(target=run_health_check, daemon=True).start()
+
+# --- BOT CONFIGURATION ---
 API_ID = 38807471
 API_HASH = '9bbfb9efe1a47596cf7f1b20017f5dc6'
 BOT_TOKEN = '8497898449:AAGk-FcVpSMzo92JwCsDWPJLI7Vdd3jeuTY'
 ADMIN_ID = 5541778617
+CHECKER_API_URL = 'http://108.165.12.183:8081/'
 
-# File paths
 PREMIUM_FILE = 'premium.txt'
 SITES_FILE = 'sites.txt'
 PROXY_FILE = 'proxy.txt'
 
-# Initialize bot
+# --- SECURITY LOGIC ---
+def is_premium(user_id):
+    if user_id == ADMIN_ID: return True
+    try:
+        if os.path.exists(PREMIUM_FILE):
+            with open(PREMIUM_FILE, 'r') as f:
+                premium_list = [line.strip() for line in f.readlines() if line.strip()]
+                if str(user_id) in premium_list: return True
+    except: pass
+    return False
+
+# --- EMOJI & HELPERS ---
+PREMIUM_EMOJI_IDS = {
+    "✅": "6023660820544623088", "🔥": "5999340396432333728", 
+    "❌": "6037570896766438989", "⚡": "6026367225466720832", 
+    "💳": "5971944878815317190", "💠": "5971837723676249096", 
+    "🎯": "5974235702701853774", "🤖": "6057466460886799210", 
+    "📊": "5971837723676249096", "🍄": "6023660820544623088"
+}
+
+def premium_emoji(text):
+    if not text: return text
+    result = text
+    for emoji, doc_id in PREMIUM_EMOJI_IDS.items():
+        result = result.replace(emoji, f'<tg-emoji emoji-id="{doc_id}">{emoji}</tg-emoji>')
+    return result
+
+# --- INITIALIZE BOT ---
 bot = TelegramClient('checker_bot', API_ID, API_HASH).start(bot_token=BOT_TOKEN)
 
-# Store active checking sessions
-active_sessions = {}
+# --- BIN INFO FUNCTION ---
+async def get_bin_info(card_number):
+    bin_num = card_number[:6]
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(f'https://bins.antipublic.cc/bins/{bin_num}') as res:
+                if res.status == 200:
+                    data = await res.json()
+                    return (data.get('brand', '-'), data.get('type', '-'), data.get('level', '-'), 
+                            data.get('bank', '-'), data.get('country_name', '-'), data.get('country_flag', ''))
+    except: pass
+    return '-', '-', '-', '-', '-', ''
 
-# Dead site error keywords
-_DEAD_INDICATORS = (
-    'receipt id is empty', 'handle is empty', 'product id is empty',
-    'tax amount is empty', 'payment method identifier is empty',
-    'invalid url', 'error in 1st req', 'error in 1 req',
-    'cloudflare', 'connection failed', 'timed out',
+# --- HIT NOTIFICATION DESIGN ---
+async def send_realtime_hit(user_id, result, hit_type):
+    emoji = "✅" if hit_type == "Charged" else "🔥"
+    status_text = "𝐂𝐡𝐚𝐫𝐠𝐞𝐝" if hit_type == "Charged" else "𝐋𝐢𝐯𝐞"
+    brand, b_type, level, bank, country, flag = await get_bin_info(result['card'].split('|')[0])
+    
+    message = f"""<b>⚡💳 ㅤ#𝒮𝒽𝑜𝓅𝒾𝒾𝒾  💳⚡</b>
+<b>━━━━━━━━━━━━━━━━━</b>
+<b>⚡💠 𝐇𝐢𝐭 𝐅𝐨𝐮𝐧𝐝!</b>
+<blockquote>{emoji} Status: {status_text}</blockquote>
+<blockquote>💳 Card: <code>{result['card']}</code></blockquote>
+<blockquote>📝 Response: {result['message'][:150]}</blockquote>
+<blockquote>🌐 𝐆𝐚𝐭𝐞𝐰𝐚𝐲: 🔥 {result.get('gateway', 'Unknown')}</blockquote>
+<b>━━━━━━━━━━━━━━━━━</b>
+<b>🎯💠 𝐁𝐈𝐍 𝐈𝐧𝐟𝐨</b>
+<pre>𝗕𝗜𝗡: {brand} - {b_type} - {level}
+𝗕𝗮𝗻𝗸: {bank}
+𝗖𝗼𝘂𝗻𝘁𝗿𝘆: {country} {flag}</pre>
+<b>━━━━━━━━━━━━━━━━━</b>
+🤖 <b>Made wt ♥️: <a href="tg://user?id=5541778617">P.o.Riot 🍄</a></b>"""
+    await bot.send_message(user_id, premium_emoji(message), parse_mode='html')
+
+# --- COMMANDS ---
+
+@bot.on(events.NewMessage(pattern='/start'))
+async def start(event):
+    welcome = (
+        "<b>⚡💳 Welcome to Shopiiiii ! 💳⚡</b>\n"
+        "<b>━━━━━━━━━━━━━━━━━</b>\n"
+        "<b>⚡💠 𝐂𝐂 𝐂𝐨𝐦𝐦𝐚𝐧𝐝𝐬</b>\n"
+        "<blockquote>• /cc card|mm|yy|cvv - Check single CC\n"
+        "• /bin 123456 - Get BIN info\n"
+        "• /chk - Reply to .txt file to check cards</blockquote>\n"
+        "<b>⚡💠 𝐒𝐢𝐭𝐞 𝐂𝐨𝐦𝐦𝐚𝐧𝐝𝐬</b>\n"
+        "<blockquote>• /addsite [url] - Add new site\n"
+        "• /site - Check all sites & remove dead</blockquote>\n"
+        "<b>━━━━━━━━━━━━━━━━━</b>\n"
+        "<b>Made wt ♥️: <a href='tg://user?id=5541778617'>P.o.Riot 🍄</a></b>"
+    )
+    await event.reply(premium_emoji(welcome), parse_mode='html')
+
+@bot.on(events.NewMessage(pattern=r'^/bin\s+(\d{6})'))
+async def bin_command(event):
+    if not is_premium(event.sender_id): return await event.reply("⚠️ Access Denied.")
+    bin_num = event.pattern_match.group(1)
+    brand, b_type, level, bank, country, flag = await get_bin_info(bin_num)
+    response = (
+        f"<b>⚡💠 𝐁𝐈𝐍 𝐈𝐧𝐟𝐨 𝐑𝐞𝐬𝐮𝐥𝐭</b>\n"
+        f"<b>━━━━━━━━━━━━━━━━━</b>\n"
+        f"<blockquote>🎯 BIN: <code>{bin_num}</code></blockquote>\n"
+        f"<blockquote>📊 Info: {brand} - {b_type} - {level}</blockquote>\n"
+        f"<blockquote>🏛️ Bank: {bank}</blockquote>\n"
+        f"<blockquote>🌍 Country: {country} {flag}</blockquote>\n"
+        f"<b>━━━━━━━━━━━━━━━━━</b>\n"
+        "<b>Made wt ♥️: P.o.Riot 🍄</b>"
+    )
+    await event.reply(premium_emoji(response), parse_mode='html')
+
+@bot.on(events.NewMessage(pattern=r'^/addsite\s+'))
+async def add_site(event):
+    if not is_premium(event.sender_id): return await event.reply("⚠️ Access Denied.")
+    urls = event.message.text.replace('/addsite ', '').split()
+    with open(SITES_FILE, 'a') as f:
+        for url in urls:
+            if url.startswith('http'): f.write(f"{url}\n")
+    await event.reply(premium_emoji("✅ Sites added by <b>P.o.Riot 🍄</b>"))
+
+print("✅ Bot is online - Made wt ♥️ by P.o.Riot 🍄")
+bot.run_until_disconnected()
+from http.server import HTTPServer, BaseHTTPRequestHandler
+import threading
+from telethon import TelegramClient, events, Button
+import asyncio
+import aiohttp
+import aiofiles
+import os
+import random
+import time
+import json
+import re
+from datetime import datetime
+
+# --- RENDER HEALTH CHECK SERVER ---
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"Bot is alive!")
+    def do_HEAD(self):
+        self.send_response(200)
+        self.end_headers()
+
+def run_health_check():
+    server = HTTPServer(('0.0.0.0', 10000), HealthCheckHandler)
+    server.serve_forever()
+
+threading.Thread(target=run_health_check, daemon=True).start()
+
+# --- BOT CONFIGURATION ---
+API_ID = 38807471
+API_HASH = '9bbfb9efe1a47596cf7f1b20017f5dc6'
+BOT_TOKEN = '8497898449:AAGk-FcVpSMzo92JwCsDWPJLI7Vdd3jeuTY'
+ADMIN_ID = 5541778617
+CHECKER_API_URL = 'http://108.165.12.183:8081/'
+
+PREMIUM_FILE = 'premium.txt'
+SITES_FILE = 'sites.txt'
+PROXY_FILE = 'proxy.txt'
+
+# --- SECURITY LOGIC ---
+def is_premium(user_id):
+    if user_id == ADMIN_ID: return True
+    try:
+        if os.path.exists(PREMIUM_FILE):
+            with open(PREMIUM_FILE, 'r') as f:
+                premium_list = [line.strip() for line in f.readlines() if line.strip()]
+                if str(user_id) in premium_list: return True
+    except: pass
+    return False
+
+# --- EMOJI & HELPERS ---
+PREMIUM_EMOJI_IDS = {
+    "✅": "6023660820544623088", "🔥": "5999340396432333728", 
+    "❌": "6037570896766438989", "⚡": "6026367225466720832", 
+    "💳": "5971944878815317190", "💠": "5971837723676249096", 
+    "🎯": "5974235702701853774", "🤖": "6057466460886799210", 
+    "📊": "5971837723676249096", "🍄": "6023660820544623088"
+}
+
+def premium_emoji(text):
+    if not text: return text
+    result = text
+    for emoji, doc_id in PREMIUM_EMOJI_IDS.items():
+        result = result.replace(emoji, f'<tg-emoji emoji-id="{doc_id}">{emoji}</tg-emoji>')
+    return result
+
+# --- INITIALIZE BOT ---
+bot = TelegramClient('checker_bot', API_ID, API_HASH).start(bot_token=BOT_TOKEN)
+
+# --- BIN INFO FUNCTION ---
+async def get_bin_info(card_number):
+    bin_num = card_number[:6]
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(f'https://bins.antipublic.cc/bins/{bin_num}') as res:
+                if res.status == 200:
+                    data = await res.json()
+                    return (data.get('brand', '-'), data.get('type', '-'), data.get('level', '-'), 
+                            data.get('bank', '-'), data.get('country_name', '-'), data.get('country_flag', ''))
+    except: pass
+    return '-', '-', '-', '-', '-', ''
+
+# --- HIT NOTIFICATION DESIGN ---
+async def send_realtime_hit(user_id, result, hit_type):
+    emoji = "✅" if hit_type == "Charged" else "🔥"
+    status_text = "𝐂𝐡𝐚𝐫𝐠𝐞𝐝" if hit_type == "Charged" else "𝐋𝐢𝐯𝐞"
+    brand, b_type, level, bank, country, flag = await get_bin_info(result['card'].split('|')[0])
+    
+    message = f"""<b>⚡💳 ㅤ#𝒮𝒽𝑜𝓅𝒾𝒾𝒾  💳⚡</b>
+<b>━━━━━━━━━━━━━━━━━</b>
+<b>⚡💠 𝐇𝐢𝐭 𝐅𝐨𝐮𝐧𝐝!</b>
+<blockquote>{emoji} Status: {status_text}</blockquote>
+<blockquote>💳 Card: <code>{result['card']}</code></blockquote>
+<blockquote>📝 Response: {result['message'][:150]}</blockquote>
+<blockquote>🌐 𝐆𝐚𝐭𝐞𝐰𝐚𝐲: 🔥 {result.get('gateway', 'Unknown')}</blockquote>
+<b>━━━━━━━━━━━━━━━━━</b>
+<b>🎯💠 𝐁𝐈𝐍 𝐈𝐧𝐟𝐨</b>
+<pre>𝗕𝗜𝗡: {brand} - {b_type} - {level}
+𝗕𝗮𝗻𝗸: {bank}
+𝗖𝗼𝘂𝗻𝘁𝗿𝘆: {country} {flag}</pre>
+<b>━━━━━━━━━━━━━━━━━</b>
+🤖 <b>Made wt ♥️: <a href="tg://user?id=5541778617">P.o.Riot 🍄</a></b>"""
+    await bot.send_message(user_id, premium_emoji(message), parse_mode='html')
+
+# --- COMMANDS ---
+
+@bot.on(events.NewMessage(pattern='/start'))
+async def start(event):
+    welcome = (
+        "<b>⚡💳 Welcome to Shopiiiii ! 💳⚡</b>\n"
+        "<b>━━━━━━━━━━━━━━━━━</b>\n"
+        "<b>⚡💠 𝐂𝐂 𝐂𝐨𝐦𝐦𝐚𝐧𝐝𝐬</b>\n"
+        "<blockquote>• /cc card|mm|yy|cvv - Check single CC\n"
+        "• /bin 123456 - Get BIN info\n"
+        "• /chk - Reply to .txt file to check cards</blockquote>\n"
+        "<b>⚡💠 𝐒𝐢𝐭𝐞 𝐂𝐨𝐦𝐦𝐚𝐧𝐝𝐬</b>\n"
+        "<blockquote>• /addsite [url] - Add new site\n"
+        "• /site - Check all sites & remove dead</blockquote>\n"
+        "<b>━━━━━━━━━━━━━━━━━</b>\n"
+        "<b>Made wt ♥️: <a href='tg://user?id=5541778617'>P.o.Riot 🍄</a></b>"
+    )
+    await event.reply(premium_emoji(welcome), parse_mode='html')
+
+@bot.on(events.NewMessage(pattern=r'^/bin\s+(\d{6})'))
+async def bin_command(event):
+    if not is_premium(event.sender_id): return await event.reply("⚠️ Access Denied.")
+    bin_num = event.pattern_match.group(1)
+    brand, b_type, level, bank, country, flag = await get_bin_info(bin_num)
+    response = (
+        f"<b>⚡💠 𝐁𝐈𝐍 𝐈𝐧𝐟𝐨 𝐑𝐞𝐬𝐮𝐥𝐭</b>\n"
+        f"<b>━━━━━━━━━━━━━━━━━</b>\n"
+        f"<blockquote>🎯 BIN: <code>{bin_num}</code></blockquote>\n"
+        f"<blockquote>📊 Info: {brand} - {b_type} - {level}</blockquote>\n"
+        f"<blockquote>🏛️ Bank: {bank}</blockquote>\n"
+        f"<blockquote>🌍 Country: {country} {flag}</blockquote>\n"
+        f"<b>━━━━━━━━━━━━━━━━━</b>\n"
+        "<b>Made wt ♥️: P.o.Riot 🍄</b>"
+    )
+    await event.reply(premium_emoji(response), parse_mode='html')
+
+@bot.on(events.NewMessage(pattern=r'^/addsite\s+'))
+async def add_site(event):
+    if not is_premium(event.sender_id): return await event.reply("⚠️ Access Denied.")
+    urls = event.message.text.replace('/addsite ', '').split()
+    with open(SITES_FILE, 'a') as f:
+        for url in urls:
+            if url.startswith('http'): f.write(f"{url}\n")
+    await event.reply(premium_emoji("✅ Sites added by <b>P.o.Riot 🍄</b>"))
+
+print("✅ Bot is online - Made wt ♥️ by P.o.Riot 🍄")
+bot.run_until_disconnected()
+                    'cloudflare', 'connection failed', 'timed out',
     'access denied', 'tlsv1 alert', 'ssl routines',
     'could not resolve', 'domain name not found',
     'name or service not known', 'openssl ssl_connect',
